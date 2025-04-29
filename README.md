@@ -17,6 +17,9 @@ This comprehensive guide covers setting up a professional CI/CD and GitOps pipel
 11. [Monitoring and Observability](#11-monitoring-and-observability)
 12. [Maintenance and Operations](#12-maintenance-and-operations)
 
+> [!IMPORTANT]
+> See how the whole process works at the high level: [Image Tag Update Process for New Commits](#image-tag-update-process-for-new-commits)
+
 ---
 
 ## 1. Repository Structure
@@ -1186,3 +1189,197 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.27.1+k3s1 sh -
 
 This comprehensive guide covers setting up a complete CI/CD and GitOps pipeline for deploying applications to Kubernetes. By following these steps, you'll have a professional-grade deployment system that automates the entire process from code commit to production deployment, with proper testing, versioning, and monitoring.
 
+---
+
+# Image Tag Update Process for New Commits
+
+The flow for updating image tags when new commits are made to the application repositories works as follows:
+
+## 1. In the Application Repositories (event-api, event-ui)
+
+When new code is pushed to main or staging branches:
+
+### First: The Test Workflow Runs
+
+```yaml
+# event-api/.github/workflows/test.yml
+name: Test
+
+on:
+  push:
+    branches: [main, staging]
+    # ... other triggers
+```
+
+### Second: The Build and Push Workflow Runs
+
+After tests pass, this workflow builds a new Docker image and pushes it to GHCR with tags based on the commit SHA:
+
+```yaml
+# event-api/.github/workflows/build-push.yml
+name: Build and Push Image
+
+on:
+  workflow_run:
+    workflows: ["Test"]
+    branches: [main, staging]
+    types:
+      - completed
+
+jobs:
+  build-push:
+    # ... other config
+    steps:
+      # ... checkout, setup steps
+      
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}  # This includes tags like sha-a7b3c9d and main/staging
+          # ... other options
+      
+      # KEY STEP: This triggers the next workflow to update Helm charts
+      - name: Trigger chart update
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          repository: ${{ github.repository_owner }}/event-platform-infra
+          event-type: update-api-chart
+          client-payload: '{"branch": "${{ github.ref_name }}", "sha": "${{ github.sha }}", "short_sha": "${{ github.sha }}"}'
+```
+
+### Third: The Update Chart Workflow is Triggered
+
+```yaml
+# event-api/.github/workflows/update-chart.yml
+name: Update Chart
+
+on:
+  repository_dispatch:
+    types: [update-api-chart]
+
+jobs:
+  update-chart:
+    # ... config
+    steps:
+      - name: Checkout Infrastructure Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/event-platform-infra
+          token: ${{ secrets.PAT_TOKEN }}
+          path: infra
+      
+      # ... other steps
+      
+      # KEY STEP: Update the Helm chart with the new image tag
+      - name: Update Chart Version
+        env:
+          BRANCH: ${{ github.event.client_payload.branch }}
+          SHA: ${{ github.event.client_payload.sha }}
+          SHORT_SHA: ${{ github.event.client_payload.short_sha }}
+        run: |
+          cd infra/charts/event-api
+          
+          # Get the current version and increment it
+          CURRENT_VERSION=$(grep '^version:' Chart.yaml | awk '{print $2}')
+          IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
+          PATCH=$((VERSION_PARTS[2] + 1))
+          NEW_VERSION="${VERSION_PARTS[0]}.${VERSION_PARTS[1]}.$PATCH"
+          
+          # Update Chart.yaml with new version and appVersion
+          sed -i "s/^version:.*/version: $NEW_VERSION/" Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"sha-${SHORT_SHA:0:7}\"/" Chart.yaml
+          
+          # THIS IS THE CRITICAL LINE: Update the image tag in values.yaml
+          sed -i "s/tag:.*/tag: sha-${SHORT_SHA:0:7}/" values.yaml
+          
+          # Determine environment based on branch
+          if [[ "$BRANCH" == "staging" ]]; then
+            ENVIRONMENT="staging"
+          else
+            ENVIRONMENT="production"
+          fi
+          
+          # Commit the changes to the infrastructure repo
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add Chart.yaml values.yaml
+          git commit -m "Update event-api chart to version $NEW_VERSION for $ENVIRONMENT (sha-${SHORT_SHA:0:7})"
+          git push
+```
+
+## 2. In the Infrastructure Repository (event-platform-infra)
+
+### Finally: The Release Charts Workflow is Triggered
+
+When the infrastructure repo is updated by the previous workflow, this workflow packages and publishes the Helm chart:
+
+```yaml
+# event-platform-infra/.github/workflows/release-charts.yml
+name: Release Charts
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+
+jobs:
+  release:
+    # ... config
+    steps:
+      # ... other steps
+      
+      - name: Package Charts
+        run: |
+          mkdir -p helm-repo/charts
+          helm package charts/event-api -d helm-repo/charts/
+          # ... package other charts
+      
+      - name: Update Index
+        run: |
+          helm repo index helm-repo --url https://${{ github.repository_owner }}.github.io/event-platform-infra
+      
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./helm-repo
+```
+
+## 3. ArgoCD Detects and Applies the Changes
+
+ArgoCD continuously monitors the Git repository and detects changes to the Helm charts. When it sees the updated image tag in `values.yaml`, it automatically deploys the new version:
+
+```yaml
+# From the ArgoCD application definition
+spec:
+  source:
+    repoURL: https://github.com/yourusername/event-platform-infra.git
+    targetRevision: HEAD  # This means it always uses the latest commit
+    path: charts/event-api
+    helm:
+      valueFiles:
+        - values.yaml  # This file now contains the updated image tag
+```
+
+## Complete Flow Summary
+
+1. **Code Change**: Commit pushed to the event-api repository
+2. **Test**: Tests run in GitHub Actions
+3. **Build**: Docker image built with tag `sha-a7b3c9d` (first 7 chars of commit SHA)
+4. **Push**: Image pushed to GHCR
+5. **Update Infrastructure**: A workflow updates `tag: sha-a7b3c9d` in the Helm chart's values.yaml
+6. **Chart Release**: Updated chart is packaged and published to GitHub Pages
+7. **Deployment**: ArgoCD detects the change and updates the deployment with the new image
+
+This full circle process ensures:
+1. Every code change gets a unique, traceable image tag
+2. The image tag is automatically updated in the Helm chart
+3. ArgoCD automatically deploys the new version
+4. The entire process is automated without manual intervention
+
+This is a true GitOps flow where everything is driven by Git commits, and the desired state is always reflected in the Git repository.
