@@ -25,7 +25,7 @@ spec:
               value: /api
             - name: NODE_ENV
               value: production
-          image: ghcr.io/ejsadiarin/event-ui:latest
+          image: ghcr.io/ejsadiarin/event-ui:sha-794c3ed
           name: event-ui
           ports:
             - containerPort: 3000

@@ -44,7 +44,7 @@ spec:
               value: redis
             - name: REDIS_PORT
               value: "6379"
-          image: ghcr.io/ejsadiarin/event-api:latest
+          image: ghcr.io/ejsadiarin/event-api:sha-587a09a
           livenessProbe:
             exec:
               command:
