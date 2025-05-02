@@ -1062,20 +1062,94 @@ spec:
 
 ## 11. Monitoring and Observability
 
-### Installing Prometheus and Grafana
+```bash
+# first, create monitoring namespace
+kubectl create namespace monitoring
+```
+
+1. Install Metrics Server in every cluster to satisfy autoscaling prerequisites [Kubernetes](https://kubernetes.io/docs/tasks/debug/debug-cluster/resource-metrics-pipeline).
+
+2. Deploy Prometheus Operator with ServiceMonitors for application metrics [GitHub](https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/developer/getting-started.md).
+3. Use ServiceMonitors to broadly capture custom metrics; fall back to PodMonitors when Services are unsuitable [What is Rancher? | Rancher](https://ranchermanager.docs.rancher.com/reference-guides/monitoring-v2-configuration/servicemonitors-and-podmonitors).
+j
+4. Secure Scraping - use Secrets in ServiceMonitors for TLS/basicAuth, and use NetworkPolicies to restrict who can reach metrics endpoints.
+
+5. Use Grafana dashboards for both Kubernetes (node/pod CPU/memory via Metrics Server) and application metrics (via Prometheus) in a unified view.
+
+
+### Installing Prometheus and Grafana (with kube-prometheus-stack)
 
 ```bash
 # Add Prometheus Helm repo
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+# Add Grafana Helm repo
+helm repo add grafana https://grafana.github.io/helm-charts
 
 # Install Prometheus stack with Grafana
 helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
   --create-namespace \
   --set grafana.adminPassword=admin
+
+# Install bare Prometheus if have Longhorn as storageClass
+helm install prometheus prometheus-community/prometheus \
+  --namespace monitoring \
+  --set alertmanager.persistentVolume.storageClass=longhorn \
+  --set server.persistentVolume.storageClass=longhorn
 ```
 
-### Setting Up ServiceMonitors for Your Applications
+- Installing `kube-prometheus-stack` deploys the Prometheus Operator, CRDs (like ServiceMonitor), Grafana, Alertmanager, preconfigured dashboards, and default scrape configs out-of-the-box
+    - a fully integrated Kubernetes monitoring solution that follows best practices with minimal setup
+
+
+### Manual/Bare Installation of Prometheus and Grafana
+
+- Installing bare Prometheus and Grafana is recommended if you want fine-grained control over each component.
+
+- This also assumes that you use Longhorn as your `storageClass`.
+
+#### Add Helm repositories
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+```
+
+#### Create monitoring namespace
+
+```bash
+kubectl create namespace monitoring
+```
+
+#### Install Prometheus
+
+```bash
+helm install prometheus prometheus-community/prometheus \
+  --namespace monitoring \
+  --set alertmanager.persistentVolume.storageClass=longhorn \
+  --set server.persistentVolume.storageClass=longhorn
+```
+
+#### Install Grafana
+
+```bash
+helm install grafana grafana/grafana \
+  --namespace monitoring \
+  --set persistence.storageClassName=longhorn \
+  --set persistence.enabled=true \
+  --set adminPassword=admin  # Change this to a secure password
+```
+
+
+### Setting Up ServiceMonitor for Your Applications
+
+* ServiceMonitor - is a Custom Resource Definition (CRD) provided by the Prometheus Operator that declaratively defines which HTTP(S) endpoints Prometheus should scrape (beyond just CPU/memory), supporting custom metrics, relabeling, and advanced scrape configurations.
+
+> [!NOTE]
+> **Difference with Metric Server:**
+> * Metrics Server - for core Kubernetes autoscaling metrics
+> * ServiceMonitor - when you need the rich metric-scraping and alerting capabilities of Prometheus.
 
 Create a ServiceMonitor for your applications:
 
@@ -1108,6 +1182,39 @@ helm install loki grafana/loki-stack \
   --namespace monitoring \
   --set grafana.enabled=false
 ```
+
+---
+
+### Access Grafana Dashboard
+
+- RECOMMENDED STEP for Manual/Bare Installation
+
+```bash
+# Get Grafana password (if you didn't set it above)
+kubectl get secret -n monitoring grafana -o jsonpath="{.data.admin-password}" | base64 --decode
+
+# Forward port to access Grafana
+kubectl port-forward -n monitoring svc/grafana 3000:80
+```
+
+Access Grafana at http://localhost:3000
+
+### Configure Grafana with Prometheus Data Source
+
+   - Open Grafana
+   - Go to Configuration > Data Sources
+   - Add data source: Prometheus 
+   - URL: http://prometheus-server.monitoring.svc.cluster.local
+   - Save & Test
+
+### Import Dashboards
+
+   - In Grafana, go to "+" (Create) > Import
+   - Import dashboard ID: 10856 (K8s cluster monitoring)
+   - Import dashboard ID: 6417 (Kubernetes pod monitoring)
+   - Import dashboard ID: 763 (Redis dashboard)
+   - Import dashboard ID: 7362 (MySQL dashboard)
+
 
 ---
 
@@ -1383,3 +1490,21 @@ This full circle process ensures:
 4. The entire process is automated without manual intervention
 
 This is a true GitOps flow where everything is driven by Git commits, and the desired state is always reflected in the Git repository.
+
+# Load Testing
+
+To run the test:
+
+```bash
+# run event-api
+k6 run ./k6-load-test/event-api-script.js
+
+# run event-ui
+k6 run ./k6-load-test/event-ui-script.js
+```
+
+For Docker:
+
+```bash
+docker run -i grafana/k6 run - <event-api-test.js
+```
