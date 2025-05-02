@@ -1,0 +1,25 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: event-ui-ingress
+  namespace: default
+  # annotations:
+  #   traefik.ingress.kubernetes.io/router.middlewares: default-compress@kubernetescrd,default-redirect-https@kubernetescrd,default-rate-limit@kubernetescrd
+spec:
+  ingressClassName: traefik
+  # tls:
+  # - hosts:
+  #   - event.ejsadiarin.com
+  #   secretName: event-tls-cert  # You'll need to create this cert
+  rules:
+    - host: event.ejsadiarin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: event-ui
+                port:
+                  number: 3000

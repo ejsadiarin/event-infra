@@ -1,0 +1,54 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ui-to-api
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: event-api
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: event-ui
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-mysql
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: mysql
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: event-api
+      ports:
+        - protocol: TCP
+          port: 3306
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-redis
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: event-api
+      ports:
+        - protocol: TCP
+          port: 6379

@@ -1,0 +1,26 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: app-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: app.rules
+      rules:
+        - alert: HighMemoryUsage
+          expr: container_memory_usage_bytes{namespace="default"} / container_spec_memory_limit_bytes{namespace="default"} > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High memory usage on {{ $labels.pod }}"
+            description: "Pod {{ $labels.pod }} is using more than 85% of its memory limit for 5 minutes."
+        - alert: HighCpuUsage
+          expr: rate(container_cpu_usage_seconds_total{namespace="default"}[5m]) / container_spec_cpu_quota{namespace="default"} > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High CPU usage on {{ $labels.pod }}"
+            description: "Pod {{ $labels.pod }} is using more than 85% of its CPU limit for 5 minutes."

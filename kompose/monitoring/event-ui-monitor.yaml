@@ -1,0 +1,15 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: event-ui-monitor
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: event-ui # Match the labels on your event-ui service
+  endpoints:
+    - port: "http" # Use the port name from your service definition
+      path: /monitoring/metrics # Path where your Next.js app exposes metrics
+      interval: 15s
+      scrapeTimeout: 10s

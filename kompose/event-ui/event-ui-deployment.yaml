@@ -1,0 +1,39 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: event-ui
+    component: frontend
+  name: event-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: event-ui
+  template:
+    metadata:
+      labels:
+        app: event-ui
+        component: frontend
+    spec:
+      restartPolicy: Always
+      containers:
+        - env:
+            - name: NEXT_PUBLIC_API_URL
+              # value: http://event-api:3000/api
+              value: /api
+            - name: NODE_ENV
+              value: production
+          image: ghcr.io/ejsadiarin/event-ui:latest
+          name: event-ui
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"

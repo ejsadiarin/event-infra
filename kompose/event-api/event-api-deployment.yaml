@@ -1,0 +1,70 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: event-api
+    component: backend
+  name: event-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: event-api
+  template:
+    metadata:
+      labels:
+        app: event-api
+        component: backend
+    spec:
+      restartPolicy: Always
+      containers:
+        - env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: event-api-secrets
+                  key: jwt-secret
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: event-api-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              value: leap_db
+            - name: MYSQL_HOST
+              value: mysql
+            - name: MYSQL_USER
+              value: root
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PORT
+              value: "6379"
+          image: ghcr.io/ejsadiarin/event-api:latest
+          livenessProbe:
+            exec:
+              command:
+                - wget
+                - --no-verbose
+                - --tries=1
+                - --spider
+                - http://localhost:3000/api/health/live
+            failureThreshold: 5
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          name: event-api
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m" # 1 CPU core

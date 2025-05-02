@@ -1,0 +1,114 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+spec:
+  serviceName: "mysql"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      # Init container to check and prepare data directory
+      initContainers:
+        - name: init-mysql
+          image: busybox
+          command: ['sh', '-c', 'if [ -d "/var/lib/mysql/mysql" ]; then echo "MySQL data directory already exists"; else echo "Data directory is empty, ready for initialization"; fi; chown -R 999:999 /var/lib/mysql']
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          env:
+            - name: MYSQL_DATABASE
+              value: leap_db
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: root-password
+          ports:
+            - containerPort: 3306
+              name: mysql
+              protocol: TCP
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "mysqladmin ping -h localhost -u root -p\"$MYSQL_ROOT_PASSWORD\""
+            failureThreshold: 5
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          # Fixed readinessProbe
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "mysql -h localhost -u root -p\"$MYSQL_ROOT_PASSWORD\" -e 'SELECT 1'"
+            initialDelaySeconds: 5
+            periodSeconds: 2
+            timeoutSeconds: 1
+          # Fixed startupProbe
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "mysqladmin ping -h localhost -u root -p\"$MYSQL_ROOT_PASSWORD\""
+            failureThreshold: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+            - name: init-script
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init.sql
+              readOnly: true
+          args:
+            # - --default-authentication-plugin=mysql_native_password
+            # innodb memory & I/O
+            - --innodb_buffer_pool_size=1G
+            - --innodb_log_file_size=256M
+            - --innodb_flush_method=O_DIRECT
+            # durability vs throughput
+            - --innodb_flush_log_at_trx_commit=1
+            - --sync_binlog=1
+            # monitoring & logging
+            - --performance_schema=ON
+            - --slow_query_log=1
+            - --long_query_time=1
+      volumes:
+        - name: init-script
+          configMap:
+            name: mysql-cm1
+            items:
+              - key: init.sql
+                path: init.sql
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "longhorn-retain"
+        resources:
+          requests:
+            storage: 5Gi

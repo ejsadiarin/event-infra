@@ -1,0 +1,15 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: event-api-monitor
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: event-api
+  endpoints:
+    - port: "3000"
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

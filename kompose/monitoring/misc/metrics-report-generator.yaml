@@ -1,0 +1,27 @@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: metrics-report-generator
+  namespace: monitoring
+spec:
+  schedule: "0 0 * * 1" # Weekly on Monday
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: report-generator
+              image: python:3.9
+              command:
+                - /bin/bash
+                - -c
+                - "pip install requests pandas matplotlib reportlab\npython <<EOF\nimport requests\nimport pandas as pd\nimport matplotlib.pyplot as plt\nfrom reportlab.pdfgen import canvas\nfrom reportlab.lib.pagesizes import letter\n#magic___^_^___line\n# Query Prometheus\nquery = 'sum(rate(container_cpu_usage_seconds_total{namespace=\"default\"}[1d])) by (pod)'\nresponse = requests.get('http://prometheus-server.monitoring:9090/api/v1/query', \n                       params={'query': query})\n                       #magic___^_^___line\n# Process data\nresults = response.json()['data']['result']\ndf = pd.DataFrame([(r['metric']['pod'], float(r['value'][1])) for r in results], \n                 columns=['Pod', 'CPU Usage'])\n                       #magic___^_^___line\n# Create PDF report\nc = canvas.Canvas('/tmp/metrics-report.pdf', pagesize=letter)\nc.drawString(100, 750, \"Weekly Metrics Report\")\n                       #magic___^_^___line\n# Add charts and data\nplt.figure(figsize=(8, 6))\nplt.bar(df['Pod'], df['CPU Usage'])\nplt.title('CPU Usage by Pod')\nplt.savefig('/tmp/chart.png')\nc.drawImage('/tmp/chart.png', 100, 400, width=400, height=300)\n                       #magic___^_^___line\n# Add table data\ny = 350\nfor i, row in df.iterrows():\n    c.drawString(100, y, f\"{row['Pod']}: {row['CPU Usage']:.4f} CPU cores\")\n    y -= 20\n                       #magic___^_^___line\nc.save()\nprint(\"Report generated: /tmp/metrics-report.pdf\")\nEOF\n"
+              volumeMounts:
+                - name: report-volume
+                  mountPath: /tmp
+          volumes:
+            - name: report-volume
+              persistentVolumeClaim:
+                claimName: report-storage
+          restartPolicy: OnFailure
