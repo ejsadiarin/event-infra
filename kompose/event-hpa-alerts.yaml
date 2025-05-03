@@ -1,0 +1,18 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: autoscaling-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: autoscaling.rules
+      rules:
+        - alert: HPAMaxReplicasReached
+          expr: kube_horizontalpodautoscaler_status_current_replicas{namespace="default"} == kube_horizontalpodautoscaler_spec_max_replicas{namespace="default"}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "HPA for {{ $labels.horizontalpodautoscaler }} has reached max replicas"
+            description: "HPA {{ $labels.horizontalpodautoscaler }} in namespace {{ $labels.namespace }} has been at max replicas for 15 minutes. Consider increasing max replicas or investigating the cause of high load."

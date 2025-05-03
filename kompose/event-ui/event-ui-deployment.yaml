@@ -7,7 +7,7 @@ metadata:
     component: frontend
   name: event-ui
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: event-ui
@@ -37,3 +37,11 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "500m"
+          # -- use replicas: 2 or more with this:
+          # resources:
+          #   requests:
+          #     cpu: 200m
+          #     memory: 256Mi
+          #   limits:
+          #     cpu: 1000m
+          #     memory: 768Mi
