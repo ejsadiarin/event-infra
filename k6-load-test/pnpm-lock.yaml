@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      '@types/k6':
+        specifier: ^1.0.2
+        version: 1.0.2
+
+packages:
+
+  '@types/k6@1.0.2':
+    resolution: {integrity: sha512-bpja1c7OXIJk06aPGN+Aw5f3QhP0PjvgX2Fwfa3rJUaUI+O1ZE3491g9hMjhH21ZlTaAhz7h6veyxaz/RqPUTg==}
+
+snapshots:
+
+  '@types/k6@1.0.2': {}
