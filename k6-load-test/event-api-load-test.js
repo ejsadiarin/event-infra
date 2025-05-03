@@ -10,6 +10,8 @@ const eventRegistrations = new Counter('event_registrations');
 const apiLatency = new Trend('api_latency');
 const timeoutErrors = new Counter('timeout_errors');
 
+const baseUrl = 'https://event.ejsadiarin.com/api';
+
 // More balanced test configuration based on your test-info.md results
 export let options = {
     stages: [
@@ -84,9 +86,6 @@ export let options = {
         },
     },
 };
-
-// API base URL
-const baseUrl = 'https://event.ejsadiarin.com/api';
 
 // Generate unique usernames to avoid conflicts
 const generateUsername = () => {

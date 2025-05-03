@@ -2,6 +2,8 @@ import http from 'k6/http';
 import { sleep, check, group } from 'k6';
 import { Counter, Trend } from 'k6/metrics';
 
+const baseUrl = "https://event.ejsadiarin.com/api"
+
 // Custom metrics
 const failedRequests = new Counter('failed_requests');
 const apiLatency = new Trend('api_latency');
@@ -59,7 +61,7 @@ export default function () {
             JSON.stringify({
                 username: username,
                 password: password,
-                email: `${username}@example.com`
+                // email: `${username}@example.com`
             }),
             { headers: headers, timeout: '8s' }
         );
