@@ -12,79 +12,70 @@ const timeoutErrors = new Counter('timeout_errors');
 
 const baseUrl = 'https://event.ejsadiarin.com/api';
 
-// More balanced test configuration based on your test-info.md results
+// Configuration for 10k-20k concurrent users
 export let options = {
-    stages: [
-        { duration: '1m', target: 100 },     // Gradual ramp-up
-        { duration: '2m', target: 500 },     // Continue ramping
-        { duration: '2m', target: 1000 },    // Moderate load
-        { duration: '2m', target: 2000 },    // Medium load
-        { duration: '3m', target: 5000 },    // High load
-        { duration: '5m', target: 5000 },    // Maintain high load
-        { duration: '2m', target: 0 },       // Ramp down
-    ],
     thresholds: {
-        http_req_duration: ['p(95)<5000'],       // More realistic: 5s
-        'http_req_duration{name:loginRequest}': ['p(95)<8000'],  // Login can be slower
-        'http_req_duration{name:getEvents}': ['p(95)<3000'],     // Events should be faster
-        'http_req_duration{name:registerEvent}': ['p(95)<8000'], // Registration can be slower
-        failed_requests: ['count<10000'],        // Increased to be realistic
+        http_req_duration: ['p(95)<8000'],                              // Increased to 8s due to higher load
+        'http_req_duration{name:loginRequest}': ['p(95)<10000'],        // 10s for login under heavy load
+        'http_req_duration{name:getEvents}': ['p(95)<5000'],            // 5s for events listing
+        'http_req_duration{name:registerEvent}': ['p(95)<12000'],       // 12s for event registration
+        failed_requests: ['count<50000'],                               // Increased for the high load test
     },
-    // Better timeout handling
-    httpDebug: 'full',
-    timeout: '20s',  // Global request timeout
     // Performance tuning
-    batch: 10,              // Smaller batch size
-    batchPerHost: 5,        // Limit per host
-    insecureSkipTLSVerify: true,  // Skip TLS verification for better performance
-    discardResponseBodies: true,  // Discard response bodies except when needed
-    // Separate VUs for different tests to avoid hitting API limits
+    batch: 15,                                                          // Increased batch size
+    batchPerHost: 8,                                                    // Increased per host
+    insecureSkipTLSVerify: true,                                        // Skip TLS verification
+    discardResponseBodies: true,                                        // Discard responses to save memory
+    // Distributed execution settings
+    summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
+    // Separate scenarios with high VU counts
     scenarios: {
         health_checks: {
             executor: 'constant-vus',
-            vus: 5,
-            duration: '17m',
-            gracefulStop: '10s',
+            vus: 20,                                                    // Increased to 20
+            duration: '20m',                                            // Longer duration
+            gracefulStop: '20s',
             tags: { type: 'health' },
             exec: 'healthCheck',
         },
         user_auth: {
             executor: 'ramping-arrival-rate',
-            startRate: 10,
+            startRate: 30,                                              // Higher starting rate
             timeUnit: '1s',
-            preAllocatedVUs: 100,
-            maxVUs: 5000,
+            preAllocatedVUs: 1000,                                      // 1k pre-allocated
+            maxVUs: 12000,                                              // Up to 12k VUs
             stages: [
-                { duration: '1m', target: 10 },
-                { duration: '2m', target: 50 },
-                { duration: '2m', target: 100 },
-                { duration: '2m', target: 200 },
+                { duration: '2m', target: 100 },                        // Gradual warm-up
                 { duration: '3m', target: 500 },
-                { duration: '5m', target: 500 },
-                { duration: '2m', target: 0 },
+                { duration: '3m', target: 1000 },
+                { duration: '3m', target: 2000 },
+                { duration: '3m', target: 3000 },                       // Peak load
+                { duration: '5m', target: 3000 },                       // Sustained peak
+                { duration: '3m', target: 0 },                          // Gradual cool-down
             ],
             tags: { type: 'auth' },
             exec: 'userAuth',
         },
         browsing: {
             executor: 'ramping-arrival-rate',
-            startRate: 10,
+            startRate: 30,                                              // Higher starting rate
             timeUnit: '1s',
-            preAllocatedVUs: 100,
-            maxVUs: 2000,
+            preAllocatedVUs: 1000,                                      // 1k pre-allocated
+            maxVUs: 8000,                                               // Up to 8k VUs
             stages: [
-                { duration: '1m', target: 10 },
-                { duration: '2m', target: 50 },
-                { duration: '2m', target: 100 },
-                { duration: '2m', target: 200 },
-                { duration: '3m', target: 300 },
-                { duration: '5m', target: 300 },
-                { duration: '2m', target: 0 },
+                { duration: '2m', target: 100 },                        // Gradual warm-up
+                { duration: '3m', target: 500 },
+                { duration: '3m', target: 1000 },
+                { duration: '3m', target: 2000 },
+                { duration: '3m', target: 2500 },                       // Peak load
+                { duration: '5m', target: 2500 },                       // Sustained peak
+                { duration: '3m', target: 0 },                          // Gradual cool-down
             ],
             tags: { type: 'browse' },
             exec: 'browseEvents',
         },
     },
+    httpDebug: 'full',
 };
 
 // Generate unique usernames to avoid conflicts
@@ -98,7 +89,7 @@ let authTokens = [];
 // Health check function (separated to reduce load on auth)
 export function healthCheck() {
     const res = http.get(`${baseUrl}/health/live`, {
-        timeout: '5s',
+        timeout: '10s',                                              // Increased timeout
         tags: { name: 'healthCheck' }
     });
 
@@ -112,8 +103,8 @@ export function healthCheck() {
         failedRequests.add(1);
     }
 
-    // Very short sleep for health checks
-    sleep(Math.random() * 0.5 + 0.5);
+    // Short sleep for health checks
+    sleep(Math.random() * 0.8 + 0.7);                               // 0.7-1.5s
 }
 
 // User authentication function
@@ -134,7 +125,7 @@ export function userAuth() {
             {
                 headers: headers,
                 tags: { name: 'registerRequest' },
-                timeout: '10s'
+                timeout: '15s'                                      // Increased timeout
             }
         );
 
@@ -154,7 +145,7 @@ export function userAuth() {
                 {
                     headers: headers,
                     tags: { name: 'loginRequest' },
-                    timeout: '10s'
+                    timeout: '15s'                                  // Increased timeout
                 }
             );
 
@@ -166,8 +157,8 @@ export function userAuth() {
                 successfulLogins.add(1);
                 try {
                     const token = JSON.parse(loginRes.body).token;
-                    // Store token for reuse (up to 100 tokens)
-                    if (authTokens.length < 100) {
+                    // Store token for reuse (up to a larger number)
+                    if (authTokens.length < 200) {                 // Increased token cache
                         authTokens.push(token);
                     }
                 } catch (e) {
@@ -187,14 +178,15 @@ export function userAuth() {
         failedRequests.add(1);
     }
 
-    // Sleep between auth operations to avoid overloading
-    sleep(Math.random() * 2 + 1);
+    // Sleep between auth operations - adjusted for high load
+    sleep(Math.random() * 2.5 + 1.5);                             // 1.5-4s
 }
 
 // Browsing events function
 export function browseEvents() {
     // Use a stored token if available, otherwise skip
     if (authTokens.length === 0) {
+        sleep(1);
         return;
     }
 
@@ -204,12 +196,12 @@ export function browseEvents() {
     };
 
     try {
-        // Get all events - this is a read operation, so should be safe under load
+        // Get all events - read operation
         const eventsRes = http.get(`${baseUrl}/events`,
             {
                 headers: headers,
                 tags: { name: 'getEvents' },
-                timeout: '8s'
+                timeout: '12s'                                     // Increased timeout
             }
         );
 
@@ -233,15 +225,15 @@ export function browseEvents() {
             return;
         }
 
-        // View event details if we have events (50% of the time)
-        if (events.length > 0 && Math.random() <= 0.5) {
+        // View event details (40% of the time - reduced from 50%)
+        if (events.length > 0 && Math.random() <= 0.4) {
             const randomEvent = events[Math.floor(Math.random() * events.length)];
 
             const eventDetailsRes = http.get(`${baseUrl}/events/${randomEvent.id}/slots`,
                 {
                     headers: headers,
                     tags: { name: 'getEventDetails' },
-                    timeout: '8s'
+                    timeout: '12s'                                // Increased timeout
                 }
             );
 
@@ -251,13 +243,13 @@ export function browseEvents() {
 
             apiLatency.add(eventDetailsRes.timings.duration);
 
-            // Check registration and register (10% of time - limited to reduce load)
-            if (Math.random() <= 0.1) {
+            // Check registration and register (5% of time - reduced from 10%)
+            if (Math.random() <= 0.05) {
                 const regStatusRes = http.get(`${baseUrl}/events/${randomEvent.id}/check-registration`,
                     {
                         headers: headers,
                         tags: { name: 'checkRegistration' },
-                        timeout: '8s'
+                        timeout: '12s'                           // Increased timeout
                     }
                 );
 
@@ -275,7 +267,7 @@ export function browseEvents() {
                         {
                             headers: headers,
                             tags: { name: 'registerEvent' },
-                            timeout: '10s'
+                            timeout: '15s'                       // Increased timeout
                         }
                     );
 
@@ -290,13 +282,13 @@ export function browseEvents() {
             }
         }
 
-        // Get user registrations (40% of time - reduced from 70%)
-        if (Math.random() <= 0.4) {
+        // Get user registrations (30% of time - reduced from 40%)
+        if (Math.random() <= 0.3) {
             const userRegsRes = http.get(`${baseUrl}/events/user/registrations`,
                 {
                     headers: headers,
                     tags: { name: 'getUserRegistrations' },
-                    timeout: '8s'
+                    timeout: '12s'                              // Increased timeout
                 }
             );
 
@@ -312,8 +304,8 @@ export function browseEvents() {
         failedRequests.add(1);
     }
 
-    // Variable sleep with longer duration to reduce load
-    sleep(Math.random() * 3 + 2); // 2-5 seconds
+    // Longer sleep to reduce load intensity
+    sleep(Math.random() * 4 + 3);                              // 3-7 seconds
 }
 
 // Default function (fallback for direct script execution)

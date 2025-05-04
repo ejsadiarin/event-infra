@@ -1,235 +1,287 @@
-import { browser } from 'k6/browser';
+import http from 'k6/http';
 import { sleep, check } from 'k6';
-import { Counter, Trend } from 'k6/metrics';
+import { Counter, Trend, Rate } from 'k6/metrics';
+import { parseHTML } from 'k6/html';
 
 // Custom metrics
-const pageLoadTime = new Trend('ui_page_load_time');
-const navigationTime = new Trend('ui_navigation_time');
-const failedUserActions = new Counter('failed_ui_actions');
-const successfulRegistrations = new Counter('successful_ui_registrations');
-const successfulLogins = new Counter('successful_ui_logins');
+const uiPageLoads = new Counter('ui_page_loads');
+const uiLatency = new Trend('ui_latency');
+const failedUIRequests = new Counter('failed_ui_requests');
+const cssJsErrors = new Counter('css_js_errors');
+const resourceLoadRate = new Rate('resource_load_rate');
+const timeoutErrors = new Counter('timeout_errors');
 
+const baseUrl = 'https://event.ejsadiarin.com';
+
+// Configuration for 10k-20k concurrent users
 export let options = {
+    thresholds: {
+        http_req_duration: ['p(95)<10000'],                             // 10s for general UI requests
+        'http_req_duration{name:homePage}': ['p(95)<12000'],            // 12s for home page
+        'http_req_duration{name:eventsList}': ['p(95)<12000'],          // 12s for events list
+        'http_req_duration{name:eventDetails}': ['p(95)<14000'],        // 14s for event details
+        failed_ui_requests: ['count<40000'],                            // Allow more failures under extreme load
+        ui_page_loads: ['count>100000'],                                // Expect at least 100k successful page loads
+        resource_load_rate: ['rate>0.8'],                               // 80% of resources should load
+    },
+    // Load test configuration
     scenarios: {
-        ui_flow: {
-            executor: 'ramping-vus',
-            startVUs: 10,
+        ui_health_checks: {
+            executor: 'constant-vus',
+            vus: 20,                                                    // 20 VUs continuously checking health
+            duration: '20m',
+            gracefulStop: '20s',
+            tags: { type: 'health' },
+            exec: 'healthCheck',
+        },
+        homepage_browsing: {
+            executor: 'ramping-arrival-rate',
+            startRate: 30,                                              // Start with 30 req/s
+            timeUnit: '1s',
+            preAllocatedVUs: 1000,                                      // Pre-allocate 1000 VUs
+            maxVUs: 9000,                                               // Up to 9000 VUs for homepage
             stages: [
-                { duration: '1m', target: 50 },      // Ramp up to 50 (more conservative)
-                { duration: '2m', target: 100 },     // Ramp up to 100
-                { duration: '5m', target: 200 },     // Continue to 200
-                { duration: '5m', target: 200 },     // Stay at 200
-                { duration: '2m', target: 0 },       // Ramp down
+                { duration: '2m', target: 100 },                        // Gradual warm-up
+                { duration: '3m', target: 500 },
+                { duration: '3m', target: 1000 },
+                { duration: '3m', target: 1500 },
+                { duration: '3m', target: 2000 },                       // Peak load
+                { duration: '5m', target: 2000 },                       // Sustained peak
+                { duration: '3m', target: 0 },                          // Gradual cool-down
             ],
-            gracefulRampDown: '30s',
+            tags: { type: 'home' },
+            exec: 'browseHomepage',
+        },
+        events_browsing: {
+            executor: 'ramping-arrival-rate',
+            startRate: 30,                                              // Start with 30 req/s
+            timeUnit: '1s',
+            preAllocatedVUs: 1000,                                      // Pre-allocate 1000 VUs
+            maxVUs: 11000,                                              // Up to 11000 VUs for events browsing
+            stages: [
+                { duration: '2m', target: 100 },                        // Gradual warm-up
+                { duration: '3m', target: 500 },
+                { duration: '3m', target: 1000 },
+                { duration: '3m', target: 2000 },
+                { duration: '3m', target: 3000 },                       // Peak load
+                { duration: '5m', target: 3000 },                       // Sustained peak
+                { duration: '3m', target: 0 },                          // Gradual cool-down
+            ],
+            tags: { type: 'events' },
+            exec: 'browseEvents',
         },
     },
-    thresholds: {
-        'ui_page_load_time': ['p(95)<8000'],       // Less aggressive: 8s instead of 4s
-        'ui_navigation_time': ['p(95)<5000'],      // Less aggressive: 5s instead of 2s
-        'failed_ui_actions': ['count<500'],        // Increased threshold for failures
-    },
-    // Adding timeouts to prevent test from hanging indefinitely
-    setupTimeout: '1m',
-    teardownTimeout: '1m',
+    batch: 15,                                                          // Increased batch size
+    batchPerHost: 10,                                                   // Increased per host limit
+    discardResponseBodies: false,                                       // Need bodies for HTML parsing
+    insecureSkipTLSVerify: true,                                        // Skip TLS verification for performance
 };
 
-export default async function () {
-    const page = browser.newPage();
+// Health check
+export function healthCheck() {
+    const res = http.get(`${baseUrl}/health`, {
+        timeout: '10s',                                                 // Increased timeout
+        tags: { name: 'healthCheck' }
+    });
 
+    check(res, {
+        'UI health endpoint is up': (r) => r.status === 200,
+    });
+
+    sleep(Math.random() * 1 + 0.5);                                     // 0.5-1.5s
+}
+
+// Browse homepage
+export function browseHomepage() {
     try {
-        // Add a page-level timeout for all operations
-        page.setDefaultTimeout(20000); // 20 second timeout for all operations
+        // Load homepage
+        const homeRes = http.get(baseUrl, {
+            timeout: '12s',                                             // Increased timeout
+            tags: { name: 'homePage' }
+        });
 
-        // Measure initial page load time
-        const startHomeLoad = Date.now();
+        const homeSuccess = check(homeRes, {
+            'homepage loaded': (r) => r.status === 200,
+            'homepage has content': (r) => r.body.includes('<html') && r.body.includes('Event App'),
+        });
 
-        try {
-            // Navigate to the app with retry logic
-            let retries = 3;
-            let loaded = false;
+        if (homeSuccess) {
+            uiPageLoads.add(1);
+            uiLatency.add(homeRes.timings.duration);
 
-            while (retries > 0 && !loaded) {
-                try {
-                    await page.goto('https://event.ejsadiarin.com/', {
-                        waitUntil: 'networkidle',
-                        timeout: 15000
-                    });
-                    loaded = true;
-                } catch (e) {
-                    retries--;
-                    if (retries === 0) throw e;
-                    console.log(`Retrying homepage load (${retries} attempts left)`);
-                    await page.waitForTimeout(1000);
-                }
-            }
-
-            const homeLoadTime = Date.now() - startHomeLoad;
-            pageLoadTime.add(homeLoadTime);
-
-            check(page, {
-                'Homepage loaded': () => page.url() === 'https://event.ejsadiarin.com/',
-            }) || failedUserActions.add(1);
-        } catch (e) {
-            console.log(`Failed to load homepage: ${e}`);
-            failedUserActions.add(1);
-            return; // Skip the rest of the test if homepage doesn't load
+            // Load critical resources if homepage load was successful
+            loadCriticalResources(homeRes);
+        } else {
+            failedUIRequests.add(1);
         }
-
-        // Generate unique username for this test iteration
-        const uniqueId = Math.floor(Math.random() * 1000000) + Date.now();
-        const username = `uitest_${uniqueId}`;
-        const password = 'password123';
-
-        // Always register a new user to avoid login failures
-        try {
-            // Registration flow
-            const navStart = Date.now();
-            await page.click('a[href="/register"]');
-            await page.waitForSelector('input#username', { timeout: 10000 });
-            navigationTime.add(Date.now() - navStart);
-
-            // Fill registration form
-            await page.fill('input#username', username);
-            await page.fill('input#email', `${username}@example.com`);
-            await page.fill('input#password', password);
-            await page.fill('input#confirmPassword', password);
-
-            // Submit registration with retry logic
-            const regStart = Date.now();
-            await page.click('button[type="submit"]');
-
-            // Wait for navigation to complete or timeout
-            let registered = false;
-            try {
-                await page.waitForFunction(() => {
-                    return window.location.href.includes('/dashboard');
-                }, { timeout: 15000 });
-                registered = true;
-            } catch (e) {
-                console.log('Timeout waiting for dashboard after registration');
-            }
-
-            navigationTime.add(Date.now() - regStart);
-
-            // Check if registration was successful
-            if (registered) {
-                successfulRegistrations.add(1);
-                check(page, {
-                    'Registration successful': () => true
-                });
-            } else {
-                failedUserActions.add(1);
-                console.log('Registration did not redirect to dashboard');
-
-                // Try login as fallback
-                await page.goto('https://event.ejsadiarin.com/login', { timeout: 10000 });
-                await page.waitForSelector('input#username', { timeout: 10000 });
-
-                await page.fill('input#username', username);
-                await page.fill('input#password', password);
-
-                await page.click('button[type="submit"]');
-
-                try {
-                    await page.waitForFunction(() => {
-                        return window.location.href.includes('/dashboard');
-                    }, { timeout: 15000 });
-
-                    successfulLogins.add(1);
-                } catch (e) {
-                    console.log('Login fallback also failed');
-                    failedUserActions.add(1);
-                    return; // Skip rest of test if both registration and login fail
-                }
-            }
-        } catch (e) {
-            console.log('Error during registration/login: ', e);
-            failedUserActions.add(1);
-            return; // Skip rest of test
-        }
-
-        // Continue with authenticated user actions if on dashboard
-        try {
-            // Browse events
-            const browseStart = Date.now();
-            await page.click('a[href="/events"]');
-            await page.waitForSelector('div[class*="grid"]', { timeout: 15000 });
-            navigationTime.add(Date.now() - browseStart);
-
-            // Check if we can see event cards
-            const eventCards = page.locator('div[class*="card"]');
-            const eventCount = await eventCards.count();
-
-            check(null, {
-                'Events page shows events': () => eventCount > 0,
-            }) || failedUserActions.add(1);
-
-            // View details of an event if available (with fewer actions to reduce errors)
-            if (eventCount > 0) {
-                try {
-                    const detailsStart = Date.now();
-                    // Click the first event
-                    await eventCards.first().click();
-
-                    // Wait for event details page to load
-                    await page.waitForSelector('h1', { timeout: 15000 });
-                    navigationTime.add(Date.now() - detailsStart);
-
-                    // Check if register button exists and click it (20% chance - reduced from 33%)
-                    if (Math.random() <= 0.2) {
-                        try {
-                            const registerButton = page.locator('button:has-text("Register")');
-                            if (await registerButton.isVisible()) {
-                                await registerButton.click();
-                                await page.waitForTimeout(3000);
-                            }
-                        } catch (e) {
-                            // Ignore errors finding register button
-                        }
-                    }
-                } catch (e) {
-                    console.log('Error viewing event details: ', e);
-                    failedUserActions.add(1);
-                }
-            }
-
-            // Clean up by logging out (80% chance)
-            if (Math.random() <= 0.8) {
-                try {
-                    // Ensure we're on a known page first
-                    await page.goto('https://event.ejsadiarin.com/dashboard', { timeout: 10000 });
-
-                    // Find and click user menu
-                    const userMenuButton = page.locator('button[class*="rounded-full"]');
-                    await userMenuButton.click();
-
-                    // Find and click logout
-                    const logoutButton = page.locator('div[role="menuitem"]:has-text("Logout")');
-                    if (await logoutButton.isVisible()) {
-                        await logoutButton.click();
-                        await page.waitForNavigation({ timeout: 10000 });
-                    }
-                } catch (e) {
-                    console.log('Error during logout: ', e);
-                }
-            }
-        } catch (e) {
-            console.log('Error during authenticated actions: ', e);
-            failedUserActions.add(1);
-        }
-
     } catch (e) {
-        console.log('Test error: ', e);
-        failedUserActions.add(1);
-    } finally {
-        try {
-            await page.close();
-        } catch (e) {
-            console.log('Error closing page: ', e);
+        console.log('Error in homepage browsing:', e);
+        if (e.message.includes('timeout')) {
+            timeoutErrors.add(1);
         }
+        failedUIRequests.add(1);
     }
 
-    // Variable sleep between iterations
-    sleep(Math.random() * 3 + 1); // 1-4 seconds
+    // Sleep between homepage views - increased for extreme load
+    sleep(Math.random() * 5 + 3);                                     // 3-8 seconds
+}
+
+// Browse events pages
+export function browseEvents() {
+    try {
+        // Load events page
+        const eventsRes = http.get(`${baseUrl}/events`, {
+            timeout: '12s',                                           // Increased timeout
+            tags: { name: 'eventsList' }
+        });
+
+        const eventsSuccess = check(eventsRes, {
+            'events page loaded': (r) => r.status === 200,
+            'events page has content': (r) => r.body.includes('Events List') || r.body.includes('event-list'),
+        });
+
+        if (eventsSuccess) {
+            uiPageLoads.add(1);
+            uiLatency.add(eventsRes.timings.duration);
+
+            // Load critical resources
+            loadCriticalResources(eventsRes);
+
+            // Extract event links (if body parsing is enabled)
+            let eventLinks = [];
+            try {
+                const doc = parseHTML(eventsRes.body);
+                const links = doc.find('a[href*="/events/"]');
+                links.forEach(link => {
+                    const href = link.attr('href');
+                    if (href && href.includes('/events/') && !href.includes('/events/list')) {
+                        eventLinks.push(href);
+                    }
+                });
+            } catch (e) {
+                console.log('Error parsing event links:', e);
+            }
+
+            // Visit a random event detail page (25% of the time) - reduced probability
+            if (eventLinks.length > 0 && Math.random() <= 0.25) {
+                const randomLink = eventLinks[Math.floor(Math.random() * eventLinks.length)];
+                const fullUrl = randomLink.startsWith('http') ? randomLink : `${baseUrl}${randomLink}`;
+
+                const detailRes = http.get(fullUrl, {
+                    timeout: '14s',                                   // Increased timeout
+                    tags: { name: 'eventDetails' }
+                });
+
+                const detailSuccess = check(detailRes, {
+                    'event detail page loaded': (r) => r.status === 200,
+                    'event detail has content': (r) => r.body.includes('Event Details') || r.body.includes('event-detail'),
+                });
+
+                if (detailSuccess) {
+                    uiPageLoads.add(1);
+                    uiLatency.add(detailRes.timings.duration);
+                    loadCriticalResources(detailRes);
+                } else {
+                    failedUIRequests.add(1);
+                }
+
+                // Longer sleep after viewing details to reduce load
+                sleep(Math.random() * 4 + 3);                        // 3-7 seconds
+            }
+        } else {
+            failedUIRequests.add(1);
+        }
+    } catch (e) {
+        console.log('Error in events browsing:', e);
+        if (e.message.includes('timeout')) {
+            timeoutErrors.add(1);
+        }
+        failedUIRequests.add(1);
+    }
+
+    // Sleep between events page views - increased for extreme load
+    sleep(Math.random() * 6 + 4);                                   // 4-10 seconds
+}
+
+// Helper function to load critical CSS/JS resources
+function loadCriticalResources(response) {
+    try {
+        const doc = parseHTML(response.body);
+
+        // Get all CSS files
+        const cssLinks = doc.find('link[rel="stylesheet"]');
+        let cssUrls = [];
+        cssLinks.forEach(link => {
+            const href = link.attr('href');
+            if (href) {
+                cssUrls.push(href.startsWith('http') ? href : `${baseUrl}${href}`);
+            }
+        });
+
+        // Get critical JS files
+        const scriptTags = doc.find('script[src]');
+        let jsUrls = [];
+        scriptTags.forEach(script => {
+            const src = script.attr('src');
+            if (src) {
+                jsUrls.push(src.startsWith('http') ? src : `${baseUrl}${src}`);
+            }
+        });
+
+        // Only load a subset of resources to reduce test load (max 2 CSS, 2 JS)
+        const criticalCss = cssUrls.slice(0, 2);
+        const criticalJs = jsUrls.slice(0, 2);
+
+        // Batch request critical resources
+        if (criticalCss.length > 0 || criticalJs.length > 0) {
+            const requests = {};
+
+            criticalCss.forEach((url, index) => {
+                requests[`css_${index}`] = {
+                    url: url,
+                    tags: { name: 'cssResource' }
+                };
+            });
+
+            criticalJs.forEach((url, index) => {
+                requests[`js_${index}`] = {
+                    url: url,
+                    tags: { name: 'jsResource' }
+                };
+            });
+
+            const responses = http.batch(requests);
+
+            // Check resources loaded
+            let successful = 0;
+            let total = Object.keys(responses).length;
+
+            for (let key in responses) {
+                if (responses[key].status >= 200 && responses[key].status < 400) {
+                    successful++;
+                } else {
+                    cssJsErrors.add(1);
+                }
+            }
+
+            if (total > 0) {
+                resourceLoadRate.add(successful === total);
+            }
+        }
+    } catch (e) {
+        console.log('Error loading resources:', e);
+    }
+}
+
+// Default function
+export default function () {
+    const choice = Math.random();
+
+    if (choice < 0.2) {
+        healthCheck();
+    } else if (choice < 0.5) {
+        browseHomepage();
+    } else {
+        browseEvents();
+    }
 }
