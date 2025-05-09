@@ -1,0 +1,17 @@
+---
+apiVersion: v2
+name: event-ui
+description: A Helm chart for Event Registration UI
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ui
+  - events
+  - registration
+home: https://github.com/ejsadiarin/event-ui
+sources:
+  - https://github.com/ejsadiarin/event-ui
+maintainers:
+  - name: Ej Sadiarin
+    email: ejs@ejsadiarin.com

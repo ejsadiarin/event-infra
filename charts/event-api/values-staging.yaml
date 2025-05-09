@@ -1,0 +1,38 @@
+---
+# Staging-specific values
+replicaCount: 1
+
+ingress:
+  hosts:
+    - host: event-api-staging.ejsadiarin.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: event-api-staging-tls
+      hosts:
+        - event-api-staging.ejsadiarin.com
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+    traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+
+configMap:
+  NODE_ENV: "staging"
+  CORS_ORIGIN: "https://event-staging.ejsadiarin.com"
+
+resources:
+  limits:
+    cpu: 300m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+database:
+  persistence:
+    size: 5Gi
+
+redis:
+  persistence:
+    size: 2Gi

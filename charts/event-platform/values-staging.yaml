@@ -1,0 +1,9 @@
+---
+# Staging values for the umbrella chart
+event-api:
+  # Override API staging values here
+  replicaCount: 1
+
+event-ui:
+  # Override UI staging values here
+  replicaCount: 1

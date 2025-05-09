@@ -1,0 +1,93 @@
+---
+# Default values for event-ui
+replicaCount: 2
+
+image:
+  repository: ghcr.io/ejsadiarin/event-ui
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: ejsadiarin.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: event-ui-tls
+      hosts:
+        - ejsadiarin.com
+
+configMap:
+  NODE_ENV: "production"
+  API_URL: "https://event-api.ejsadiarin.com"
+  ASSET_PREFIX: ""
+
+---
+replicaCount: 1
+
+image:
+  repository: ghcr.io/ejsadiarin/event-ui
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: false
+  name: ""
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+ingress:
+  enabled: true
+  className: "traefik"
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: traefik-compress@kubernetescrd
+  hosts:
+    - host: event-ui.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+env:
+  # API URL the frontend connects to
+  NEXT_PUBLIC_API_URL: "http://event-api-service:3001/api"

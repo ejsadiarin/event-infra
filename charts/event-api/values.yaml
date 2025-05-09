@@ -1,0 +1,91 @@
+---
+# Default values for event-api
+replicaCount: 2
+
+image:
+  repository: ghcr.io/ejsadiarin/event-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3001
+
+ingress:
+  enabled: true
+  className: "traefik"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  hosts:
+    - host: event-api.ejsadiarin.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: event-api-tls
+      hosts:
+        - event-api.ejsadiarin.com
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+configMap:
+  NODE_ENV: "production"
+  MYSQL_HOST: "mysql"
+  MYSQL_USER: "root"
+  MYSQL_DATABASE: "leap_db"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  CORS_ORIGIN: "https://event.ejsadiarin.com"
+  SYNC_INTERVAL: "300000"
+  ADMIN_USER_IDS: "1"
+
+secrets:
+  create: true
+  data:
+    MYSQL_PASSWORD: ""
+    JWT_SECRET: ""
+    REDIS_PASSWORD: ""
+
+database:
+  enabled: true
+  image: mysql:8.0
+  rootPassword: ""
+  persistence:
+    enabled: true
+    size: 10Gi
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  args: ["--appendonly", "yes", "--appendfsync", "everysec", "--save", "900", "1", "--save", "300", "10", "--save", "60", "10000"]
+  persistence:
+    enabled: true
+    size: 5Gi

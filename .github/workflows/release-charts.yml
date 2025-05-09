@@ -1,0 +1,47 @@
+---
+name: Release Charts
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+
+      - name: Package Charts
+        run: |
+          mkdir -p helm-repo/charts
+          # Package individual charts
+          helm package charts/event-api -d helm-repo/charts/
+          helm package charts/event-ui -d helm-repo/charts/
+
+          # Update dependencies for umbrella chart and package it
+          helm dependency update charts/event-platform
+          helm package charts/event-platform -d helm-repo/charts/
+
+      - name: Update Index
+        run: |
+          helm repo index helm-repo --url https://${{ github.repository_owner }}.github.io/event-platform-infra
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./helm-repo

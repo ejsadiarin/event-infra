@@ -1,0 +1,17 @@
+---
+apiVersion: v2
+name: event-api
+description: A Helm chart for Event Registration API
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - api
+  - events
+  - registration
+home: https://github.com/ejsadiarin/event-api
+sources:
+  - https://github.com/ejsadiarin/event-api
+maintainers:
+  - name: Ej Sadiarin
+    email: ejs@ejsadiarin.com

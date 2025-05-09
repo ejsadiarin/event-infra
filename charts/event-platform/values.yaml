@@ -1,0 +1,9 @@
+---
+# Default values for the umbrella chart
+event-api:
+  # Override API chart values here
+  replicaCount: 2
+
+event-ui:
+  # Override UI chart values here
+  replicaCount: 2
